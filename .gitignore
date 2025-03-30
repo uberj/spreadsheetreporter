@@ -5,3 +5,6 @@ test_spreadsheets/
 resources.yaml
 instance_id.txt
 instance_ip.txt
+
+# Secrets
+.secrets

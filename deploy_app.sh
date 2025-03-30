@@ -8,6 +8,15 @@ if [ ! -f instance_id.txt ]; then
     exit 1
 fi
 
+# Check if .secrets file exists
+if [ ! -f .secrets ]; then
+    echo "Error: .secrets file not found. Please create it with NGINX_USERNAME and NGINX_PASSWORD."
+    exit 1
+fi
+
+# Source the secrets file
+source .secrets
+
 # Read the instance ID and IP from the files
 INSTANCE_ID=$(cat instance_id.txt)
 PUBLIC_IP=$(cat instance_ip.txt)
@@ -41,6 +50,10 @@ run_remote "sudo apt-get update && sudo apt-get install -y nginx python3-venv"
 echo "Generating SSL certificate..."
 run_remote "sudo mkdir -p /etc/nginx/ssl && sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/ssl/private.key -out /etc/nginx/ssl/certificate.crt -subj '/CN=$PUBLIC_IP'"
 
+# Create password file for basic auth
+echo "Creating password file for basic authentication..."
+run_remote "echo '$NGINX_USERNAME:$(openssl passwd -apr1 $NGINX_PASSWORD)' | sudo tee /etc/nginx/.htpasswd"
+
 # Configure Nginx
 echo "Configuring Nginx..."
 run_remote "sudo tee /etc/nginx/sites-available/spreadsheet_project << 'EOF'
@@ -52,6 +65,10 @@ server {
     ssl_certificate_key /etc/nginx/ssl/private.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Add basic authentication
+    auth_basic \"Restricted Access\";
+    auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
         proxy_pass http://127.0.0.1:8000;

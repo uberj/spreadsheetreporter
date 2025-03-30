@@ -17,6 +17,7 @@ import os
 import logging
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -70,17 +71,18 @@ def generate_pdf_report(row_data, row_number):
         story = []
         
         # Add title
-        story.append(Paragraph(f"Data Report", styles['CustomTitle']))
-        story.append(Paragraph(f"Row {row_number}", styles['CustomSubTitle']))
+        story.append(Paragraph(f"Report", styles['CustomTitle']))
         story.append(Spacer(1, 30))
         
-        # Create table data
+        # Create table data with wrapped text
         table_data = [['Field', 'Value']]
         for field, value in row_data.items():
-            table_data.append([field, str(value)])
+            # Convert long values to Paragraph objects for proper wrapping
+            wrapped_value = Paragraph(str(value), styles['CustomBodyText'])
+            table_data.append([field, wrapped_value])
         
-        # Create table
-        table = Table(table_data, colWidths=[2*inch, 4*inch])
+        # Create table with adjusted column widths
+        table = Table(table_data, colWidths=[2*inch, 4.5*inch])
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -96,13 +98,20 @@ def generate_pdf_report(row_data, row_number):
             ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#bdc3c7')),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('WORDWRAP', (0, 0), (-1, -1), True),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ]))
         
         story.append(table)
         story.append(Spacer(1, 30))
         
-        # Add footer
-        story.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", styles['CustomBodyText']))
+        # Add footer with PST timezone
+        pst = pytz.timezone('America/Los_Angeles')
+        current_time = datetime.now(pytz.UTC).astimezone(pst)
+        story.append(Paragraph(f"Generated on: {current_time.strftime('%B %d, %Y at %I:%M %p %Z')}", styles['CustomBodyText']))
         
         # Build PDF
         doc.build(story)
