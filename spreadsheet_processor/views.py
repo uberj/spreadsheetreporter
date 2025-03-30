@@ -3,7 +3,7 @@ from django.contrib import messages
 from django.views.generic import ListView
 from .models import Spreadsheet
 import pandas as pd
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -15,6 +15,8 @@ from django.views.decorators.http import require_http_methods
 from datetime import datetime
 import os
 import logging
+from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -193,3 +195,9 @@ def download_spreadsheet_reports(request, spreadsheet_id):
         logger.error(f"Error creating ZIP file: {str(e)}")
         messages.error(request, "Error downloading reports")
         return redirect('spreadsheet_list')
+
+def health_check(request):
+    """
+    Simple health check endpoint that returns 200 OK.
+    """
+    return JsonResponse({"status": "healthy"})
