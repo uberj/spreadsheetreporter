@@ -1,29 +1,33 @@
 {% extends 'spreadsheet_processor/base.html' %}
+{% load static %}
+{% load markdown_extras %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2>Generated Reports</h2>
-            {% if reports %}
-            <form method="post" action="{% url 'download_reports_pdf' %}">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-download"></i> Download All Reports as PDF
-                </button>
-            </form>
-            {% endif %}
         </div>
         
         {% if reports %}
             {% for report in reports %}
                 <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">Report for Row {{ report.row_number }}</h5>
-                        <small class="text-muted">Created at: {{ report.created_at }}</small>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-0">Report for Row {{ report.row_number }}</h5>
+                            <small class="text-muted">Created at: {{ report.created_at }}</small>
+                        </div>
+                        <form method="post" action="{% url 'download_report' report.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-download"></i> Download PDF
+                            </button>
+                        </form>
                     </div>
                     <div class="card-body">
-                        <pre class="bg-light p-3 rounded">{{ report.content }}</pre>
+                        <div class="markdown-content">
+                            {{ report.content|markdown|safe }}
+                        </div>
                     </div>
                 </div>
             {% endfor %}
@@ -34,4 +38,33 @@
         {% endif %}
     </div>
 </div>
+
+<style>
+    .markdown-content {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        line-height: 1.6;
+    }
+    .markdown-content h1 {
+        font-size: 2em;
+        margin-bottom: 0.5em;
+        padding-bottom: 0.3em;
+        border-bottom: 1px solid #eaecef;
+    }
+    .markdown-content h2 {
+        font-size: 1.5em;
+        margin-top: 1em;
+        margin-bottom: 0.5em;
+        padding-bottom: 0.3em;
+        border-bottom: 1px solid #eaecef;
+    }
+    .markdown-content ul {
+        padding-left: 1.5em;
+    }
+    .markdown-content li {
+        margin-bottom: 0.5em;
+    }
+    .markdown-content strong {
+        font-weight: 600;
+    }
+</style>
 {% endblock %} 

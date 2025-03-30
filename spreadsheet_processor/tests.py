@@ -6,6 +6,7 @@ import pandas as pd
 import io
 import json
 import zipfile
+import markdown
 
 class SpreadsheetProcessorTests(TestCase):
     def setUp(self):
@@ -13,7 +14,6 @@ class SpreadsheetProcessorTests(TestCase):
         self.upload_url = reverse('upload_spreadsheet')
         self.report_list_url = reverse('report_list')
         self.home_url = reverse('home')
-        self.download_pdf_url = reverse('download_reports_pdf')
         
         # Create a test Excel file
         data = {
@@ -52,7 +52,7 @@ class SpreadsheetProcessorTests(TestCase):
         report = Report.objects.create(
             spreadsheet=spreadsheet,
             row_number=1,
-            content='Name: John Doe\nAge: 30'
+            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
         )
         self.assertEqual(report.row_number, 1)
         self.assertEqual(report.spreadsheet, spreadsheet)
@@ -89,8 +89,9 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertEqual(reports[1].row_number, 2)
         
         # Verify report content contains expected data
-        self.assertIn('Name: John Doe', reports[0].content)
-        self.assertIn('Age: 30', reports[0].content)
+        self.assertIn('# Report for Row 1', reports[0].content)
+        self.assertIn('**Name**: John Doe', reports[0].content)
+        self.assertIn('**Age**: 30', reports[0].content)
 
     def test_upload_view_post_invalid_file(self):
         """Test upload with invalid file"""
@@ -117,7 +118,7 @@ class SpreadsheetProcessorTests(TestCase):
         Report.objects.create(
             spreadsheet=spreadsheet,
             row_number=1,
-            content='Name: John Doe\nAge: 30'
+            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
         )
         
         response = self.client.get(self.report_list_url)
@@ -132,30 +133,29 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertTemplateUsed(response, 'spreadsheet_processor/report_list.html')
         self.assertEqual(len(response.context['reports']), 0)
 
-    def test_download_reports_pdf(self):
-        """Test downloading reports as PDF"""
+    def test_download_report(self):
+        """Test downloading a single report as PDF"""
         # Create test data
         spreadsheet = Spreadsheet.objects.create(file=self.test_file)
-        Report.objects.create(
+        report = Report.objects.create(
             spreadsheet=spreadsheet,
             row_number=1,
-            content='Name: John Doe\nAge: 30'
+            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
         )
         
         # Test GET request (should fail)
-        response = self.client.get(self.download_pdf_url)
+        download_url = reverse('download_report', args=[report.id])
+        response = self.client.get(download_url)
         self.assertEqual(response.status_code, 405)
         
         # Test POST request
-        response = self.client.post(self.download_pdf_url)
+        response = self.client.post(download_url)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response['Content-Type'], 'application/zip')
-        
-        # Verify ZIP file contents
-        zip_buffer = io.BytesIO(response.content)
-        with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-            self.assertEqual(len(zip_file.namelist()), 1)
-            self.assertIn('report_row_1.pdf', zip_file.namelist())
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertEqual(
+            response['Content-Disposition'],
+            f'attachment; filename="report_{report.id}.pdf"'
+        )
 
     def test_end_to_end_flow(self):
         """Test the complete end-to-end flow"""
@@ -179,8 +179,16 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context['reports']), 2)
         
-        # Step 5: Verify report content
+        # Step 5: Download a report
+        report = Report.objects.first()
+        download_url = reverse('download_report', args=[report.id])
+        response = self.client.post(download_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        
+        # Step 6: Verify report content
         reports = Report.objects.all()
-        self.assertIn('Name: John Doe', reports[0].content)
-        self.assertIn('Age: 30', reports[0].content)
-        self.assertIn('Department: IT', reports[0].content)
+        self.assertIn('# Report for Row 1', reports[0].content)
+        self.assertIn('**Name**: John Doe', reports[0].content)
+        self.assertIn('**Age**: 30', reports[0].content)
+        self.assertIn('**Department**: IT', reports[0].content)
