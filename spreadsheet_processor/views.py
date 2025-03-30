@@ -1,73 +1,41 @@
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.views.generic import ListView
-from .models import Spreadsheet, Report
+from .models import Spreadsheet
 import pandas as pd
 from django.http import HttpResponse
-import json
-from django.template.loader import render_to_string
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Flowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.lib.units import inch
 import io
 import zipfile
 from django.views.decorators.http import require_http_methods
-from jinja2 import Environment, FileSystemLoader
 import markdown
 from datetime import datetime
 import os
 import logging
 from bs4 import BeautifulSoup
-import re
 
 logger = logging.getLogger(__name__)
 
-def get_jinja_env():
-    """Create and return a Jinja2 environment"""
+def generate_markdown_report(row_data, row_number):
+    """Generate a markdown report for a single row"""
     try:
-        template_dir = os.path.join(os.path.dirname(__file__), 'templates', 'spreadsheet_processor')
-        logger.info(f"Template directory: {template_dir}")
-        if not os.path.exists(template_dir):
-            logger.error(f"Template directory does not exist: {template_dir}")
-            os.makedirs(template_dir, exist_ok=True)
-            logger.info(f"Created template directory: {template_dir}")
-        
-        env = Environment(
-            loader=FileSystemLoader(template_dir)
-        )
-        return env
-    except Exception as e:
-        logger.error(f"Error creating Jinja2 environment: {str(e)}")
-        raise
-
-def generate_markdown_report(row_data, row_number, report_id):
-    """Generate a markdown report using Jinja2"""
-    try:
-        env = get_jinja_env()
-        template = env.get_template('markdown_report_template.md')
-        
-        context = {
-            'data': row_data,
-            'row_number': row_number,
-            'report_id': report_id,
-            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        return template.render(**context)
-    except Exception as e:
-        logger.error(f"Error generating markdown report: {str(e)}")
-        # Fallback to a simple format if template fails
         lines = [f"# Report for Row {row_number}\n\n## Data Summary\n"]
         for field, value in row_data.items():
             lines.append(f"- **{field}**: {value}")
         return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error generating markdown report: {str(e)}")
+        raise
 
-def markdown_to_pdf(markdown_content, pdf_buffer):
-    """Convert markdown content to PDF using HTML conversion"""
+def generate_pdf_from_markdown(markdown_content):
+    """Generate a PDF from markdown content and return the PDF data"""
     try:
+        # Create a buffer for the PDF
+        pdf_buffer = io.BytesIO()
+        
         # Convert markdown to HTML with proper extensions
         html_content = markdown.markdown(
             markdown_content,
@@ -139,86 +107,95 @@ def markdown_to_pdf(markdown_content, pdf_buffer):
         
         # Build PDF
         doc.build(story)
+        
+        # Get the PDF data
+        pdf_buffer.seek(0)
+        return pdf_buffer.getvalue()
+        
     except Exception as e:
-        logger.error(f"Error converting markdown to PDF: {str(e)}")
+        logger.error(f"Error generating PDF from markdown: {str(e)}")
         raise
 
 def upload_spreadsheet(request):
     if request.method == 'POST' and request.FILES.get('spreadsheet'):
         spreadsheet_file = request.FILES['spreadsheet']
-        spreadsheet = Spreadsheet.objects.create(file=spreadsheet_file)
         
+        # Check file extension
+        if not spreadsheet_file.name.endswith('.xlsx'):
+            messages.error(request, 'Please upload a valid Excel file (.xlsx)')
+            return render(request, 'spreadsheet_processor/upload.html')
+            
         try:
-            # Read the Excel file
-            df = pd.read_excel(spreadsheet.file)
-            
-            # Process each row
-            for index, row in df.iterrows():
-                try:
-                    # Convert row to dictionary
-                    row_data = row.to_dict()  # pandas Series to_dict() returns a dictionary
-                    
-                    # Generate markdown report
-                    report_id = f"report_{spreadsheet.id}_{index + 1}"
-                    markdown_content = generate_markdown_report(row_data, index + 1, report_id)
-                    
-                    Report.objects.create(
-                        spreadsheet=spreadsheet,
-                        row_number=index + 1,
-                        content=markdown_content
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing row {index + 1}: {str(e)}")
-                    continue
-            
-            if Report.objects.filter(spreadsheet=spreadsheet).exists():
-                spreadsheet.processed = True
-                spreadsheet.save()
-                messages.success(request, 'Spreadsheet processed successfully!')
-                return redirect('report_list')
-            else:
-                messages.error(request, 'No rows were processed successfully.')
-                spreadsheet.delete()
+            # Read Excel file with openpyxl engine
+            df = pd.read_excel(spreadsheet_file, engine='openpyxl')
+            if len(df) == 0:
+                messages.error(request, 'The spreadsheet is empty.')
                 return render(request, 'spreadsheet_processor/upload.html')
+            
+            # Save the spreadsheet
+            spreadsheet = Spreadsheet.objects.create(
+                file=spreadsheet_file,
+                processed=True
+            )
+            messages.success(request, 'Spreadsheet uploaded successfully!')
+            return redirect('spreadsheet_list')
             
         except Exception as e:
             logger.error(f"Error processing spreadsheet: {str(e)}")
-            messages.error(request, f'Error processing spreadsheet: {str(e)}')
-            spreadsheet.delete()
+            messages.error(request, f'Error processing spreadsheet: Please ensure the file is a valid Excel spreadsheet.')
             return render(request, 'spreadsheet_processor/upload.html')
     
     return render(request, 'spreadsheet_processor/upload.html')
 
-class ReportListView(ListView):
-    model = Report
-    template_name = 'spreadsheet_processor/report_list.html'
-    context_object_name = 'reports'
-    ordering = ['-created_at']
+class SpreadsheetListView(ListView):
+    model = Spreadsheet
+    template_name = 'spreadsheet_processor/spreadsheet_list.html'
+    context_object_name = 'spreadsheets'
+    ordering = ['-uploaded_at']
 
-@require_http_methods(["POST"])
-def download_report(request, report_id):
-    """Download a report as PDF"""
+@require_http_methods(["GET", "POST"])
+def download_spreadsheet_reports(request, spreadsheet_id):
+    """Download all reports for a spreadsheet as a ZIP file"""
     try:
-        report = Report.objects.get(id=report_id)
+        # Get the spreadsheet
+        spreadsheet = Spreadsheet.objects.get(id=spreadsheet_id)
         
-        # Create a buffer to store the PDF
-        pdf_buffer = io.BytesIO()
+        # Read the Excel file with openpyxl engine
+        df = pd.read_excel(spreadsheet.file, engine='openpyxl')
         
-        # Convert markdown to PDF
-        markdown_to_pdf(report.content, pdf_buffer)
+        # Create a buffer for the ZIP file
+        zip_buffer = io.BytesIO()
         
-        # Get the value of the buffer and write the response
-        pdf = pdf_buffer.getvalue()
+        # Create ZIP file
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Process each row
+            for index, row in df.iterrows():
+                try:
+                    # Convert row to dictionary
+                    row_data = row.to_dict()
+                    
+                    # Generate markdown
+                    markdown_content = generate_markdown_report(row_data, index + 1)
+                    
+                    # Generate PDF
+                    pdf_data = generate_pdf_from_markdown(markdown_content)
+                    
+                    # Add PDF to ZIP file
+                    zip_file.writestr(f'row_{index + 1}.pdf', pdf_data)
+                except Exception as e:
+                    logger.error(f"Error creating PDF for row {index + 1}: {str(e)}")
+                    continue
         
-        # Create the HTTP response
-        response = HttpResponse(pdf, content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="report_{report.id}.pdf"'
+        # Prepare the response
+        zip_buffer.seek(0)
+        response = HttpResponse(zip_buffer, content_type='application/zip')
+        response['Content-Disposition'] = f'attachment; filename="spreadsheet_{spreadsheet_id}_reports.zip"'
         return response
         
-    except Report.DoesNotExist:
-        messages.error(request, "Report not found")
-        return redirect('report_list')
+    except Spreadsheet.DoesNotExist:
+        messages.error(request, "Spreadsheet not found")
+        return redirect('spreadsheet_list')
     except Exception as e:
-        logger.error(f"Error downloading report: {str(e)}")
-        messages.error(request, f"Error downloading report: {str(e)}")
-        return redirect('report_list')
+        logger.error(f"Error creating ZIP file: {str(e)}")
+        messages.error(request, "Error downloading reports")
+        return redirect('spreadsheet_list')

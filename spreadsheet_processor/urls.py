@@ -3,6 +3,6 @@ from . import views
 
 urlpatterns = [
     path('upload/', views.upload_spreadsheet, name='upload_spreadsheet'),
-    path('reports/', views.ReportListView.as_view(), name='report_list'),
-    path('reports/<int:report_id>/download/', views.download_report, name='download_report'),
+    path('spreadsheets/', views.SpreadsheetListView.as_view(), name='spreadsheet_list'),
+    path('spreadsheets/<int:spreadsheet_id>/download/', views.download_spreadsheet_reports, name='download_spreadsheet_reports'),
 ] 

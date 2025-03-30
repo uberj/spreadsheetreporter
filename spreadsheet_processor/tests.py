@@ -1,10 +1,9 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
-from .models import Spreadsheet, Report
+from .models import Spreadsheet
 import pandas as pd
 import io
-import json
 import zipfile
 import markdown
 
@@ -12,8 +11,7 @@ class SpreadsheetProcessorTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.upload_url = reverse('upload_spreadsheet')
-        self.report_list_url = reverse('report_list')
-        self.home_url = reverse('home')
+        self.spreadsheet_list_url = reverse('spreadsheet_list')
         
         # Create a test Excel file
         data = {
@@ -23,19 +21,13 @@ class SpreadsheetProcessorTests(TestCase):
         }
         df = pd.DataFrame(data)
         excel_file = io.BytesIO()
-        df.to_excel(excel_file, index=False)
+        df.to_excel(excel_file, index=False, engine='openpyxl')
         excel_file.seek(0)
         self.test_file = SimpleUploadedFile(
             'test.xlsx',
             excel_file.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-
-    def test_root_url_redirect(self):
-        """Test that the root URL redirects to the upload page"""
-        response = self.client.get(self.home_url, follow=False)
-        self.assertEqual(response.status_code, 302)  # Check for redirect
-        self.assertEqual(response.url, self.upload_url)
 
     def test_spreadsheet_model(self):
         """Test the Spreadsheet model creation and string representation"""
@@ -46,18 +38,6 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertTrue(spreadsheet.processed)
         self.assertIn('Spreadsheet uploaded at', str(spreadsheet))
 
-    def test_report_model(self):
-        """Test the Report model creation and string representation"""
-        spreadsheet = Spreadsheet.objects.create(file=self.test_file)
-        report = Report.objects.create(
-            spreadsheet=spreadsheet,
-            row_number=1,
-            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
-        )
-        self.assertEqual(report.row_number, 1)
-        self.assertEqual(report.spreadsheet, spreadsheet)
-        self.assertIn('Report for row 1', str(report))
-
     def test_upload_view_get(self):
         """Test the upload view GET request"""
         response = self.client.get(self.upload_url)
@@ -65,7 +45,7 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertTemplateUsed(response, 'spreadsheet_processor/upload.html')
 
     def test_upload_view_post_success(self):
-        """Test successful spreadsheet upload and processing"""
+        """Test successful spreadsheet upload"""
         response = self.client.post(
             self.upload_url,
             {'spreadsheet': self.test_file},
@@ -73,25 +53,12 @@ class SpreadsheetProcessorTests(TestCase):
         )
         
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'spreadsheet_processor/report_list.html')
+        self.assertTemplateUsed(response, 'spreadsheet_processor/spreadsheet_list.html')
         
         # Check if spreadsheet was created
         self.assertEqual(Spreadsheet.objects.count(), 1)
         spreadsheet = Spreadsheet.objects.first()
         self.assertTrue(spreadsheet.processed)
-        
-        # Check if reports were created
-        self.assertEqual(Report.objects.count(), 2)
-        
-        # Verify report content
-        reports = Report.objects.all()
-        self.assertEqual(reports[0].row_number, 1)
-        self.assertEqual(reports[1].row_number, 2)
-        
-        # Verify report content contains expected data
-        self.assertIn('# Report for Row 1', reports[0].content)
-        self.assertIn('**Name**: John Doe', reports[0].content)
-        self.assertIn('**Age**: 30', reports[0].content)
 
     def test_upload_view_post_invalid_file(self):
         """Test upload with invalid file"""
@@ -109,86 +76,57 @@ class SpreadsheetProcessorTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'spreadsheet_processor/upload.html')
         self.assertEqual(Spreadsheet.objects.count(), 0)
-        self.assertEqual(Report.objects.count(), 0)
 
-    def test_report_list_view(self):
-        """Test the report list view"""
+    def test_spreadsheet_list_view(self):
+        """Test the spreadsheet list view"""
         # Create test data
-        spreadsheet = Spreadsheet.objects.create(file=self.test_file)
-        Report.objects.create(
-            spreadsheet=spreadsheet,
-            row_number=1,
-            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
-        )
+        spreadsheet = Spreadsheet.objects.create(file=self.test_file, processed=True)
         
-        response = self.client.get(self.report_list_url)
+        response = self.client.get(self.spreadsheet_list_url)
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'spreadsheet_processor/report_list.html')
-        self.assertEqual(len(response.context['reports']), 1)
+        self.assertTemplateUsed(response, 'spreadsheet_processor/spreadsheet_list.html')
+        self.assertEqual(len(response.context['spreadsheets']), 1)
 
-    def test_report_list_view_empty(self):
-        """Test the report list view when no reports exist"""
-        response = self.client.get(self.report_list_url)
+    def test_spreadsheet_list_view_empty(self):
+        """Test the spreadsheet list view when no spreadsheets exist"""
+        response = self.client.get(self.spreadsheet_list_url)
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'spreadsheet_processor/report_list.html')
-        self.assertEqual(len(response.context['reports']), 0)
+        self.assertTemplateUsed(response, 'spreadsheet_processor/spreadsheet_list.html')
+        self.assertEqual(len(response.context['spreadsheets']), 0)
 
-    def test_download_report(self):
-        """Test downloading a single report as PDF"""
+    def test_download_spreadsheet_reports(self):
+        """Test downloading reports for a spreadsheet"""
         # Create test data
-        spreadsheet = Spreadsheet.objects.create(file=self.test_file)
-        report = Report.objects.create(
-            spreadsheet=spreadsheet,
-            row_number=1,
-            content='# Report for Row 1\n\n## Data Summary\n- **Name**: John Doe\n- **Age**: 30'
-        )
+        spreadsheet = Spreadsheet.objects.create(file=self.test_file, processed=True)
         
-        # Test GET request (should fail)
-        download_url = reverse('download_report', args=[report.id])
+        # Test GET request (should work now)
+        download_url = reverse('download_spreadsheet_reports', args=[spreadsheet.id])
         response = self.client.get(download_url)
-        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/zip')
         
         # Test POST request
         response = self.client.post(download_url)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertEqual(response['Content-Type'], 'application/zip')
         self.assertEqual(
             response['Content-Disposition'],
-            f'attachment; filename="report_{report.id}.pdf"'
+            f'attachment; filename="spreadsheet_{spreadsheet.id}_reports.zip"'
         )
+        
+        # Verify ZIP file contents
+        zip_buffer = io.BytesIO(response.content)
+        with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+            # Should contain 2 PDFs (one for each row, excluding header)
+            self.assertEqual(len(zip_file.namelist()), 2)
+            self.assertTrue('row_1.pdf' in zip_file.namelist())
+            self.assertTrue('row_2.pdf' in zip_file.namelist())
 
-    def test_end_to_end_flow(self):
-        """Test the complete end-to-end flow"""
-        # Step 1: Visit upload page
-        response = self.client.get(self.upload_url)
-        self.assertEqual(response.status_code, 200)
-        
-        # Step 2: Upload spreadsheet
-        response = self.client.post(
-            self.upload_url,
-            {'spreadsheet': self.test_file},
-            follow=True
-        )
-        self.assertEqual(response.status_code, 200)
-        
-        # Step 3: Verify reports were created
-        self.assertEqual(Report.objects.count(), 2)
-        
-        # Step 4: View reports
-        response = self.client.get(self.report_list_url)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.context['reports']), 2)
-        
-        # Step 5: Download a report
-        report = Report.objects.first()
-        download_url = reverse('download_report', args=[report.id])
-        response = self.client.post(download_url)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response['Content-Type'], 'application/pdf')
-        
-        # Step 6: Verify report content
-        reports = Report.objects.all()
-        self.assertIn('# Report for Row 1', reports[0].content)
-        self.assertIn('**Name**: John Doe', reports[0].content)
-        self.assertIn('**Age**: 30', reports[0].content)
-        self.assertIn('**Department**: IT', reports[0].content)
+    def test_download_spreadsheet_reports_not_found(self):
+        """Test downloading reports for a non-existent spreadsheet"""
+        download_url = reverse('download_spreadsheet_reports', args=[999])
+        response = self.client.post(download_url, follow=True)
+        self.assertRedirects(response, self.spreadsheet_list_url)
+        messages = list(response.context['messages'])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(str(messages[0]), 'Spreadsheet not found')
