@@ -5,105 +5,102 @@ from .models import Spreadsheet
 import pandas as pd
 from django.http import HttpResponse
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.lib.units import inch
 import io
 import zipfile
 from django.views.decorators.http import require_http_methods
-import markdown
 from datetime import datetime
 import os
 import logging
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-def generate_markdown_report(row_data, row_number):
-    """Generate a markdown report for a single row"""
-    try:
-        lines = [f"# Report for Row {row_number}\n\n## Data Summary\n"]
-        for field, value in row_data.items():
-            lines.append(f"- **{field}**: {value}")
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error(f"Error generating markdown report: {str(e)}")
-        raise
-
-def generate_pdf_from_markdown(markdown_content):
-    """Generate a PDF from markdown content and return the PDF data"""
+def generate_pdf_report(row_data, row_number):
+    """Generate a beautiful PDF report for a single row"""
     try:
         # Create a buffer for the PDF
         pdf_buffer = io.BytesIO()
         
-        # Convert markdown to HTML with proper extensions
-        html_content = markdown.markdown(
-            markdown_content,
-            extensions=['extra', 'nl2br', 'sane_lists']
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            pdf_buffer,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
         )
         
-        # Create PDF document
-        doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+        # Get styles
         styles = getSampleStyleSheet()
         
         # Create custom styles
         styles.add(ParagraphStyle(
-            name='CustomHeader',
+            name='CustomTitle',
             parent=styles['Heading1'],
-            fontSize=16,
+            fontSize=24,
             spaceAfter=30,
-            textColor=colors.black
+            textColor=colors.HexColor('#2c3e50'),
+            alignment=1  # Center alignment
         ))
         
         styles.add(ParagraphStyle(
-            name='CustomSubHeader',
+            name='CustomSubTitle',
             parent=styles['Heading2'],
-            fontSize=14,
+            fontSize=16,
             spaceAfter=20,
-            textColor=colors.black
+            textColor=colors.HexColor('#34495e'),
+            alignment=1  # Center alignment
         ))
         
         styles.add(ParagraphStyle(
-            name='CustomList',
+            name='CustomBodyText',
             parent=styles['Normal'],
             fontSize=12,
             spaceAfter=12,
-            textColor=colors.black
+            textColor=colors.HexColor('#2c3e50')
         ))
-        
-        # Parse HTML with BeautifulSoup
-        soup = BeautifulSoup(html_content, 'html.parser')
         
         # Build PDF content
         story = []
         
-        # Process each HTML element
-        for element in soup.find_all(['h1', 'h2', 'p', 'li', 'strong']):
-            if element.name == 'h1':
-                text = element.get_text().strip()
-                if text:
-                    story.append(Paragraph(text, styles['CustomHeader']))
-                    story.append(Spacer(1, 20))
-            elif element.name == 'h2':
-                text = element.get_text().strip()
-                if text:
-                    story.append(Paragraph(text, styles['CustomSubHeader']))
-                    story.append(Spacer(1, 15))
-            elif element.name == 'li':
-                text = element.get_text().strip()
-                if text:
-                    story.append(Paragraph(f"• {text}", styles['CustomList']))
-                    story.append(Spacer(1, 12))
-            elif element.name == 'p':
-                text = element.get_text().strip()
-                if text:
-                    story.append(Paragraph(text, styles['CustomList']))
-                    story.append(Spacer(1, 12))
-            elif element.name == 'strong':
-                text = element.get_text().strip()
-                if text:
-                    story.append(Paragraph(f"<b>{text}</b>", styles['CustomList']))
-                    story.append(Spacer(1, 12))
+        # Add title
+        story.append(Paragraph(f"Data Report", styles['CustomTitle']))
+        story.append(Paragraph(f"Row {row_number}", styles['CustomSubTitle']))
+        story.append(Spacer(1, 30))
+        
+        # Create table data
+        table_data = [['Field', 'Value']]
+        for field, value in row_data.items():
+            table_data.append([field, str(value)])
+        
+        # Create table
+        table = Table(table_data, colWidths=[2*inch, 4*inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ecf0f1')),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.HexColor('#2c3e50')),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#bdc3c7')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(table)
+        story.append(Spacer(1, 30))
+        
+        # Add footer
+        story.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", styles['CustomBodyText']))
         
         # Build PDF
         doc.build(story)
@@ -113,7 +110,7 @@ def generate_pdf_from_markdown(markdown_content):
         return pdf_buffer.getvalue()
         
     except Exception as e:
-        logger.error(f"Error generating PDF from markdown: {str(e)}")
+        logger.error(f"Error generating PDF report: {str(e)}")
         raise
 
 def upload_spreadsheet(request):
@@ -174,11 +171,8 @@ def download_spreadsheet_reports(request, spreadsheet_id):
                     # Convert row to dictionary
                     row_data = row.to_dict()
                     
-                    # Generate markdown
-                    markdown_content = generate_markdown_report(row_data, index + 1)
-                    
                     # Generate PDF
-                    pdf_data = generate_pdf_from_markdown(markdown_content)
+                    pdf_data = generate_pdf_report(row_data, index + 1)
                     
                     # Add PDF to ZIP file
                     zip_file.writestr(f'row_{index + 1}.pdf', pdf_data)
