@@ -1,0 +1,25 @@
+{% extends 'spreadsheet_processor/base.html' %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="text-center">Upload Spreadsheet</h2>
+            </div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="spreadsheet" class="form-label">Select Excel File (.xlsx)</label>
+                        <input type="file" class="form-control" id="spreadsheet" name="spreadsheet" accept=".xlsx" required>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Upload and Process</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
